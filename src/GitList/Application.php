@@ -9,12 +9,15 @@ use GitList\Provider\GitServiceProvider;
 use GitList\Provider\RepositoryUtilServiceProvider;
 use GitList\Provider\ViewUtilServiceProvider;
 use GitList\Provider\RoutingUtilServiceProvider;
+use Symfony\Component\Filesystem\Filesystem;
 
 /**
  * GitList application.
  */
 class Application extends SilexApplication
 {
+    protected $path;
+
     /**
      * Constructor initialize services.
      *
@@ -24,43 +27,35 @@ class Application extends SilexApplication
     public function __construct(Config $config, $root = null)
     {
         parent::__construct();
-
         $app = $this;
-        $root = realpath($root);
+        $this->path = realpath($root);
 
         $this['debug'] = $config->get('app', 'debug');
+        $this['date.format'] = $config->get('date', 'format') ? $config->get('date', 'format') : 'd/m/Y H:i:s';
+        $this['theme'] = $config->get('app', 'theme') ? $config->get('app', 'theme') : 'default';
+        $this['title'] = $config->get('app', 'title') ? $config->get('app', 'title') : 'GitList';
         $this['filetypes'] = $config->getSection('filetypes');
-        $this['cache.archives'] = $root . DIRECTORY_SEPARATOR
-                . 'cache' . DIRECTORY_SEPARATOR . 'archives';
+        $this['binary_filetypes'] = $config->getSection('binary_filetypes');
+        $this['cache.archives'] = $this->getCachePath() . 'archives';
 
         // Register services
         $this->register(new TwigServiceProvider(), array(
-            'twig.path'       => $root . DIRECTORY_SEPARATOR . 'views',
-            'twig.options'    => array('cache' => $root . DIRECTORY_SEPARATOR
-                                 . 'cache' . DIRECTORY_SEPARATOR . 'views'),
+            'twig.path'       => array($this->getThemePath($this['theme']), $this->getThemePath('default')),
+            'twig.options'    => $config->get('app', 'cache') ?
+                                 array('cache' => $this->getCachePath() . 'views') : array(),
         ));
 
         $repositories = $config->get('git', 'repositories');
 
-        $cached_repos = $config->get('app', 'cached_repos');
-        if (false === $cached_repos || empty($cached_repos)) {
-            $cached_repos = $root . DIRECTORY_SEPARATOR . 'cache'
-                    . DIRECTORY_SEPARATOR . 'repos.json';
-        }
-
         $this->register(new GitServiceProvider(), array(
-            'git.client'      => $config->get('git', 'client'),
-            'git.repos'       => $repositories,
-            'cache.repos'     => $cached_repos,
-            'ini.file'        => "config.ini",
-            'git.hidden'      => $config->get('git', 'hidden') ?
-                                 $config->get('git', 'hidden') : array(),
-            'git.default_branch' => $config->get('git', 'default_branch') ? $config->get('git', 'default_branch') : 'master',
+            'git.client'         => $config->get('git', 'client'),
+            'git.repos'          => $repositories,
+            'ini.file'           => "config.ini",
+            'git.hidden'         => $config->get('git', 'hidden') ?
+                                    $config->get('git', 'hidden') : array(),
+            'git.default_branch' => $config->get('git', 'default_branch') ?
+                                    $config->get('git', 'default_branch') : 'master',
         ));
-
-        $cached_repos = $root . DIRECTORY_SEPARATOR .
-                'cache' . DIRECTORY_SEPARATOR . 'repos.json';
-
 
         $this->register(new ViewUtilServiceProvider());
         $this->register(new RepositoryUtilServiceProvider());
@@ -68,12 +63,17 @@ class Application extends SilexApplication
         $this->register(new RoutingUtilServiceProvider());
 
         $this['twig'] = $this->share($this->extend('twig', function ($twig, $app) {
-            $twig->addFilter('htmlentities', new \Twig_Filter_Function('htmlentities'));
-            $twig->addFilter('md5', new \Twig_Filter_Function('md5'));
+            $twig->addFilter(new \Twig_SimpleFilter('htmlentities', 'htmlentities'));
+            $twig->addFilter(new \Twig_SimpleFilter('md5', 'md5'));
+            $twig->addFilter(new \Twig_SimpleFilter('format_date', array($app, 'formatDate')));
+            $twig->addFilter(new \Twig_SimpleFilter('format_size', array($app, 'formatSize')));
 
             return $twig;
         }));
 
+        $this['escaper.argument'] = $this->share(function() {
+            return new Escaper\ArgumentEscaper();
+        });
 
         // Handle errors
         $this->error(function (\Exception $e, $code) use ($app) {
@@ -85,6 +85,57 @@ class Application extends SilexApplication
                 'message' => $e->getMessage(),
             ));
         });
+
+        $this->finish(function () use ($app, $config) {
+            if (!$config->get('app', 'cache')) {
+                $fs = new Filesystem();
+                $fs->remove($app['cache.archives']);
+            }
+        });
+    }
+
+    public function formatDate($date)
+    {
+        return $date->format($this['date.format']);
+    }
+
+    public function formatSize($size)
+    {
+        $mod = 1000;
+        $units = array('B', 'kB', 'MB', 'GB');
+        for($i = 0; $size > $mod; $i++) $size /= $mod;
+        return round($size, 2) . $units[$i];
+    }
+
+    public function getPath()
+    {
+        return $this->path . DIRECTORY_SEPARATOR;
+    }
+
+    public function setPath($path)
+    {
+        $this->path = $path;
+
+        return $this;
+    }
+
+    public function getCachePath()
+    {
+        return $this->path
+            . DIRECTORY_SEPARATOR
+            . 'cache'
+            . DIRECTORY_SEPARATOR;
+    }
+
+    public function getThemePath($theme)
+    {
+        return $this->path
+            . DIRECTORY_SEPARATOR
+            . 'themes'
+            . DIRECTORY_SEPARATOR
+            . $theme
+            . DIRECTORY_SEPARATOR
+            . 'twig'
+            . DIRECTORY_SEPARATOR;
     }
 }
-

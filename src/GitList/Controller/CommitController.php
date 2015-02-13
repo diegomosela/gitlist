@@ -12,8 +12,17 @@ class CommitController implements ControllerProviderInterface
     {
         $route = $app['controllers_factory'];
 
+        $route->get('{repo}/commits/search', function (Request $request, $repo) use ($app) {
+            $subRequest = Request::create(
+                '/' . $repo . '/commits/master/search',
+                'POST',
+                array('query' => $request->get('query'))
+            );
+            return $app->handle($subRequest, \Symfony\Component\HttpKernel\HttpKernelInterface::SUB_REQUEST);
+        })->assert('repo', $app['util.routing']->getRepositoryRegex());
+
         $route->get('{repo}/commits/{commitishPath}', function ($repo, $commitishPath) use ($app) {
-            $repository = $app['git']->getRepository($app['git.repos'], $repo);
+            $repository = $app['git']->getRepositoryFromName($app['git.repos'], $repo);
 
             if ($commitishPath === null) {
                 $commitishPath = $repository->getHead();
@@ -30,8 +39,8 @@ class CommitController implements ControllerProviderInterface
             $categorized = array();
 
             foreach ($commits as $commit) {
-                $date = $commit->getDate();
-                $date = $date->format('m/d/Y');
+                $date = $commit->getCommiterDate();
+                $date = $date->format('Y-m-d');
                 $categorized[$date][] = $commit;
             }
 
@@ -50,18 +59,19 @@ class CommitController implements ControllerProviderInterface
         })->assert('repo', $app['util.routing']->getRepositoryRegex())
           ->assert('commitishPath', $app['util.routing']->getCommitishPathRegex())
           ->value('commitishPath', null)
+          ->convert('commitishPath', 'escaper.argument:escape')
           ->bind('commits');
 
         $route->post('{repo}/commits/{branch}/search', function (Request $request, $repo, $branch = '') use ($app) {
-            $repository = $app['git']->getRepository($app['git.repos'], $repo);
+            $repository = $app['git']->getRepositoryFromName($app['git.repos'], $repo);
             $query = $request->get('query');
 
-            $commits = $repository->searchCommitLog($request->get('query'));
+            $commits = $repository->searchCommitLog($query, $branch);
             $categorized = array();
 
             foreach ($commits as $commit) {
-                $date = $commit->getDate();
-                $date = $date->format('m/d/Y');
+                $date = $commit->getCommiterDate();
+                $date = $date->format('Y-m-d');
                 $categorized[$date][] = $commit;
             }
 
@@ -76,10 +86,11 @@ class CommitController implements ControllerProviderInterface
             ));
         })->assert('repo', $app['util.routing']->getRepositoryRegex())
           ->assert('branch', $app['util.routing']->getBranchRegex())
+          ->convert('branch', 'escaper.argument:escape')
           ->bind('searchcommits');
 
         $route->get('{repo}/commit/{commit}', function ($repo, $commit) use ($app) {
-            $repository = $app['git']->getRepository($app['git.repos'], $repo);
+            $repository = $app['git']->getRepositoryFromName($app['git.repos'], $repo);
             $commit = $repository->getCommit($commit);
             $branch = $repository->getHead();
 
@@ -93,7 +104,7 @@ class CommitController implements ControllerProviderInterface
           ->bind('commit');
 
         $route->get('{repo}/blame/{commitishPath}', function ($repo, $commitishPath) use ($app) {
-            $repository = $app['git']->getRepository($app['git.repos'], $repo);
+            $repository = $app['git']->getRepositoryFromName($app['git.repos'], $repo);
 
             list($branch, $file) = $app['util.routing']
                 ->parseCommitishPathParam($commitishPath, $repo);
@@ -112,6 +123,7 @@ class CommitController implements ControllerProviderInterface
             ));
         })->assert('repo', $app['util.routing']->getRepositoryRegex())
           ->assert('commitishPath', $app['util.routing']->getCommitishPathRegex())
+          ->convert('commitishPath', 'escaper.argument:escape')
           ->bind('blame');
 
         return $route;

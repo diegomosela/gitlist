@@ -3,6 +3,7 @@
 namespace GitList\Util;
 
 use Silex\Application;
+use GitList\Exception\EmptyRepositoryException;
 
 class Routing
 {
@@ -23,7 +24,7 @@ class Routing
     public function parseCommitishPathParam($commitishPath, $repo)
     {
         $app = $this->app;
-        $repository = $app['git']->getRepository($app['git.repos'], $repo);
+        $repository = $app['git']->getRepositoryFromName($app['git.repos'], $repo);
 
         $commitish = null;
         $path = null;
@@ -40,8 +41,6 @@ class Routing
         }
 
         if ($commitish === null) {
-            // DEBUG Can you have a repo with no branches? How should we handle
-            // that?
             $branches = $repository->getBranches();
 
             $tags = $repository->getTags();
@@ -59,22 +58,24 @@ class Routing
                 }
             }
 
-            $commitish = $matchedBranch;
-        }
-
-        if ($commitish === null) {
-            $app->abort(404, "'$branch_path' does not appear to contain a commit-ish for '$repo'.");
+            if ($matchedBranch !== null) {
+                $commitish = $matchedBranch;
+            } else {
+                // We may have partial commit hash as our commitish.
+                $hash = $slashPosition === false ? $commitishPath : substr($commitishPath, 0, $slashPosition);
+                if ($repository->hasCommit($hash)) {
+                    $commit = $repository->getCommit($hash);
+                    $commitish = $commit->getHash();
+                } else {
+                    throw new EmptyRepositoryException('This repository is currently empty. There are no commits.');
+                }
+            }
         }
 
         $commitishLength = strlen($commitish);
         $path = substr($commitishPath, $commitishLength);
         if (strpos($path, '/') === 0) {
             $path = substr($path, 1);
-        }
-
-        $commitHasPath = $repository->pathExists($commitish, $path);
-        if ($commitHasPath !== true) {
-            $app->abort(404, "\"$path\" does not exist in \"$commitish\".");
         }
 
         return array($commitish, $path);
@@ -107,15 +108,15 @@ class Routing
         static $regex = null;
 
         if ($regex === null) {
-            $app = $this->app;
-            $self = $this;
+            $isWindows = $this->isWindows();
             $quotedPaths = array_map(
-               function ($repo) use ($app, $self) {
-                    $repoName =  $repo['name'] ;
-                    //Windows
-                    if ($self->isWindows()){
-                       $repoName = str_replace('\\', '\\\\',$repoName);
+                function ($repo) use ($isWindows) {
+                    $repoName = preg_quote($repo['name']);
+
+                    if ($isWindows) {
+                        $repoName = str_replace('\\', '\\\\', $repoName);
                     }
+
                     return $repoName;
                 },
                 $this->app['git']->getRepositories($this->app['git.repos'])
@@ -137,12 +138,14 @@ class Routing
 
     public function isWindows()
     {
-      switch(PHP_OS){
-        case  'WIN32':
-        case  'WINNT':
-        case  'Windows': return true;
-        default : return false;
-      }
+        switch (PHP_OS) {
+            case 'WIN32':
+            case 'WINNT':
+            case 'Windows':
+                return true;
+            default:
+                return false;
+        }
     }
 
     /**

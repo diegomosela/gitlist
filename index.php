@@ -1,11 +1,10 @@
 <?php
 
 /**
- * GitList 0.3
- * https://github.com/klaussilveira/gitlist
+ * GitList: an elegant and modern git repository viewer
+ * http://gitlist.org
  */
 
-// Set the default timezone for systems without date.timezone set in php.ini
 if (!ini_get('date.timezone')) {
     date_default_timezone_set('UTC');
 }
@@ -14,12 +13,18 @@ if (php_sapi_name() == 'cli-server' && file_exists(substr($_SERVER['REQUEST_URI'
     return false;
 }
 
+if (!is_writable(__DIR__ . DIRECTORY_SEPARATOR . 'cache')) {
+    die(sprintf('The "%s" folder must be writable for GitList to run.', __DIR__ . DIRECTORY_SEPARATOR . 'cache'));
+}
+
 require 'vendor/autoload.php';
 
-// Load configuration
 $config = GitList\Config::fromFile('config.ini');
 
-$app = require 'boot.php';
+if ($config->get('date', 'timezone')) {
+    date_default_timezone_set($config->get('date', 'timezone'));
+}
 
+$app = require 'boot.php';
 $app->run();
 
